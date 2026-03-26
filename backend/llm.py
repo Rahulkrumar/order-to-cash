@@ -17,14 +17,14 @@ GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5
 # Domain context injected into every SQL generation call
 DOMAIN_CONTEXT = """
 IMPORTANT JOIN KEYS (use these to link tables):
-- sales_order_headers.soldToParty      → business_partners.customer
-- sales_order_items.salesOrder         → sales_order_headers.salesOrder
-- sales_order_items.material           → product_descriptions.product  (also join language='EN')
-- billing_documents.soldToParty        → business_partners.customer
-- billing_documents.accountingDocument → journal_entry_items.accountingDocument
-- billing_documents.accountingDocument → payments.accountingDocument
-- payments.customer                    → business_partners.customer
-- sales_order_items.productionPlant    → plants.plant
+- sales_order_headers.customer     -> business_partners.customer
+- sales_order_items.salesOrder     -> sales_order_headers.salesOrder
+- sales_order_items.material       -> product_descriptions.product
+- billing_documents.customer       -> business_partners.customer
+- billing_documents.billingDocument -> journal_entry_items.accountingDocument
+- payments.customer                -> business_partners.customer
+- sales_order_items.productionPlant -> plants.plant
+"""
 
 STATUS CODES (for filtering broken/incomplete flows):
 - overallDeliveryStatus: 'A'=Not delivered, 'B'=Partially, 'C'=Fully delivered
