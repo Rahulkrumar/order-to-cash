@@ -18,13 +18,12 @@ GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5
 DOMAIN_CONTEXT = """
 IMPORTANT JOIN KEYS (use these to link tables):
 - sales_order_headers.customer     -> business_partners.customer
-- sales_order_items.salesOrder     -> sales_order_headers.salesOrder
+- sales_order_items.salesOrder      -> sales_order_headers.salesOrder
 - sales_order_items.material       -> product_descriptions.product
-- billing_documents.customer       -> business_partners.customer
+- billing_documents.customer        -> business_partners.customer
 - billing_documents.billingDocument -> journal_entry_items.accountingDocument
-- payments.customer                -> business_partners.customer
+- payments.customer                 -> business_partners.customer
 - sales_order_items.productionPlant -> plants.plant
-"""
 
 STATUS CODES (for filtering broken/incomplete flows):
 - overallDeliveryStatus: 'A'=Not delivered, 'B'=Partially, 'C'=Fully delivered
@@ -34,11 +33,19 @@ STATUS CODES (for filtering broken/incomplete flows):
 
 BUSINESS RULES:
 - "Broken/incomplete flow" = sales orders where delivery not complete OR billing not complete
-  → overallDeliveryStatus != 'C' OR overallOrdReltdBillgStatus != 'C'
+- overallDeliveryStatus != 'C' OR overallOrdReltdBillgStatus != 'C'
 - "Delivered but not billed" = overallDeliveryStatus='C' AND overallOrdReltdBillgStatus != 'C'
-- Tracing a billing document: JOIN billing_documents → journal_entry_items on accountingDocument
+
+# --- CRITICAL FIX FOR SOLD-TO-PARTY ERROR ---
+- COLUMN MAPPING: In the 'billing_documents' table, the column name is 'customer'.
+- NEVER use 'soldToParty' in SQL. If the user asks for 'sold to party', use 'billing_documents.customer'.
+- 'T3.soldToParty' is an invalid column. Always use 'T3.customer' if T3 is billing_documents.
+# --------------------------------------------
+
+- Tracing a billing document: JOIN billing_documents -> journal_entry_items on accountingDocument
 - Payments are linked to billing via payments.accountingDocument = billing_documents.accountingDocument
 - All monetary amounts are stored as TEXT, use CAST(x AS REAL) for arithmetic
+"""
 """
 
 SYSTEM_PROMPT = """You are a SQL expert for an SAP Order-to-Cash (O2C) business data system.
@@ -58,7 +65,8 @@ Rules:
 - Always filter product_descriptions with language='EN' when joining
 - For aggregations, always include GROUP BY
 - NEVER use DROP/DELETE/INSERT/UPDATE/CREATE/ALTER
-- If question is not about the O2C dataset, return: {{"sql": null, "out_of_scope": true}}
+- Use only exact column names from the schema. Do not assume names like soldToParty.  # <--- YEH NAYI LINE ADD KAREIN
+- If question is not about the O2C dataset, return: {"sql": null, "out_of_scope": true}
 """
 
 ANSWER_PROMPT = """You are a business analyst. Answer this question based ONLY on the SQL results below.
