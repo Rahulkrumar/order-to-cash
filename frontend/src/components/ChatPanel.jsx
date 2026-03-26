@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import axios from 'axios'
 
 const SUGGESTED = [
@@ -42,11 +42,66 @@ function SQLBlock({ sql }) {
   )
 }
 
+// Typewriter hook
+function useTypewriter(text, speed = 12) {
+  const [displayed, setDisplayed] = useState('')
+  const [done, setDone] = useState(false)
+
+  useEffect(() => {
+    if (!text) return
+    setDisplayed('')
+    setDone(false)
+    let i = 0
+    const interval = setInterval(() => {
+      i++
+      setDisplayed(text.slice(0, i))
+      if (i >= text.length) {
+        clearInterval(interval)
+        setDone(true)
+      }
+    }, speed)
+    return () => clearInterval(interval)
+  }, [text, speed])
+
+  return { displayed, done }
+}
+
+function BotMessage({ msg }) {
+  const isLatest = msg.isLatest
+  const { displayed, done } = useTypewriter(isLatest ? msg.content : null, 10)
+  const content = isLatest ? displayed : msg.content
+
+  return (
+    <div className="msg-bot">
+      <span dangerouslySetInnerHTML={{
+        __html: content
+          .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+          .replace(/\n/g, '<br/>')
+      }} />
+      {isLatest && !done && (
+        <span style={{
+          display: 'inline-block', width: 2, height: '1em',
+          background: '#475569', marginLeft: 2,
+          animation: 'blink 0.7s infinite',
+          verticalAlign: 'text-bottom',
+        }} />
+      )}
+      {msg.sql && (isLatest ? done : true) && <SQLBlock sql={msg.sql} />}
+      {msg.data?.length > 0 && (isLatest ? done : true) && (
+        <div className="msg-results-count">
+          {msg.data.length} row{msg.data.length !== 1 ? 's' : ''} returned
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function ChatPanel({ onHighlight, apiUrl }) {
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
       content: 'Hi! I can help you analyze the **Order to Cash** process.',
+      isLatest: false,
     }
   ])
   const [input, setInput] = useState('')
@@ -59,12 +114,15 @@ export default function ChatPanel({ onHighlight, apiUrl }) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const send = async (text) => {
+  const send = useCallback(async (text) => {
     const q = text || input.trim()
     if (!q || loading) return
     setInput('')
 
-    const userMsg = { role: 'user', content: q }
+    // Mark all previous as not latest
+    setMessages(prev => prev.map(m => ({ ...m, isLatest: false })))
+
+    const userMsg = { role: 'user', content: q, isLatest: false }
     setMessages(prev => [...prev, userMsg])
     setLoading(true)
 
@@ -75,7 +133,7 @@ export default function ChatPanel({ onHighlight, apiUrl }) {
       })
       const { answer, sql, data, highlighted_nodes } = res.data
 
-      const botMsg = { role: 'assistant', content: answer, sql, data }
+      const botMsg = { role: 'assistant', content: answer, sql, data, isLatest: true }
       setMessages(prev => [...prev, botMsg])
 
       if (highlighted_nodes?.length) {
@@ -91,12 +149,13 @@ export default function ChatPanel({ onHighlight, apiUrl }) {
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: err.response?.data?.detail || 'Connection error. Is the backend running?',
+        isLatest: true,
       }])
     } finally {
       setLoading(false)
       inputRef.current?.focus()
     }
-  }
+  }, [input, loading, history, apiUrl, onHighlight])
 
   const handleKey = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
@@ -104,6 +163,13 @@ export default function ChatPanel({ onHighlight, apiUrl }) {
 
   return (
     <div className="chat-panel" style={{ height: '100%' }}>
+      <style>{`
+        @keyframes blink {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0; }
+        }
+      `}</style>
+
       {/* Header */}
       <div style={{
         padding: '14px 16px 10px',
@@ -140,19 +206,7 @@ export default function ChatPanel({ onHighlight, apiUrl }) {
               {msg.role === 'user' ? (
                 <div className="msg-user">{msg.content}</div>
               ) : (
-                <div className="msg-bot">
-                  <span dangerouslySetInnerHTML={{
-                    __html: msg.content
-                      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                      .replace(/\n/g, '<br/>')
-                  }} />
-                  {msg.sql && <SQLBlock sql={msg.sql} />}
-                  {msg.data?.length > 0 && (
-                    <div className="msg-results-count">
-                      {msg.data.length} row{msg.data.length !== 1 ? 's' : ''} returned
-                    </div>
-                  )}
-                </div>
+                <BotMessage msg={msg} />
               )}
             </div>
           </div>
@@ -162,7 +216,9 @@ export default function ChatPanel({ onHighlight, apiUrl }) {
           <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 16 }}>
             <Avatar initials="D" dark />
             <div>
-              <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Dodge AI <span style={{ color: '#94a3b8', fontWeight: 400 }}>Graph Agent</span></div>
+              <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>
+                Dodge AI <span style={{ color: '#94a3b8', fontWeight: 400 }}>Graph Agent</span>
+              </div>
               <div className="msg-bot" style={{ color: '#94a3b8' }}>
                 <span style={{ animation: 'pulse 1s infinite' }}>Analyzing…</span>
               </div>
@@ -204,16 +260,16 @@ export default function ChatPanel({ onHighlight, apiUrl }) {
         flexShrink: 0,
       }}>
         <div style={{
-          display: 'flex', alignItems: 'flex-start', gap: 8,
-          background: '#f8fafc', border: '1px solid #e2e8f0',
-          borderRadius: 10, padding: '8px 12px',
+          display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6,
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-            <span className="status-dot" />
-            <span style={{ fontSize: 11, color: '#64748b' }}>Dodge AI is awaiting instructions</span>
-          </div>
+          <span className="status-dot" style={{
+            background: loading ? '#f59e0b' : '#22c55e'
+          }} />
+          <span style={{ fontSize: 11, color: '#64748b' }}>
+            {loading ? 'Dodge AI is thinking…' : 'Dodge AI is awaiting instructions'}
+          </span>
         </div>
-        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+        <div style={{ display: 'flex', gap: 8 }}>
           <textarea
             ref={inputRef}
             value={input}
@@ -235,7 +291,8 @@ export default function ChatPanel({ onHighlight, apiUrl }) {
               background: input.trim() && !loading ? '#111' : '#e2e8f0',
               color: input.trim() && !loading ? 'white' : '#94a3b8',
               border: 'none', borderRadius: 8, padding: '8px 16px',
-              fontSize: 13, fontWeight: 500, cursor: input.trim() && !loading ? 'pointer' : 'default',
+              fontSize: 13, fontWeight: 500,
+              cursor: input.trim() && !loading ? 'pointer' : 'default',
               transition: 'background 0.15s',
               alignSelf: 'flex-end',
             }}
@@ -247,3 +304,10 @@ export default function ChatPanel({ onHighlight, apiUrl }) {
     </div>
   )
 }
+
+
+
+
+  
+
+  
