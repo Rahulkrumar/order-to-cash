@@ -11,19 +11,19 @@ from graph import find_nodes_by_value
 
 GROQ_API_KEY   = os.environ.get("GROQ_API_KEY", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GROQ_URL   = "https://api.groq.com/openai/v1/chat/completions"
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+GROQ_URL       = "https://api.groq.com/openai/v1/chat/completions"
+GEMINI_URL     = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
 
 # Domain context injected into every SQL generation call
 DOMAIN_CONTEXT = """
 IMPORTANT JOIN KEYS (use these to link tables):
-- sales_order_headers.customer     -> business_partners.customer
-- sales_order_items.salesOrder      -> sales_order_headers.salesOrder
-- sales_order_items.material       -> product_descriptions.product
-- billing_documents.customer        -> business_partners.customer
-- billing_documents.billingDocument -> journal_entry_items.accountingDocument
-- payments.customer                 -> business_partners.customer
-- sales_order_items.productionPlant -> plants.plant
+- sales_order_headers.customer       -> business_partners.customer
+- sales_order_items.salesOrder       -> sales_order_headers.salesOrder
+- sales_order_items.material         -> product_descriptions.product
+- billing_documents.customer         -> business_partners.customer
+- billing_documents.billingDocument  -> journal_entry_items.accountingDocument
+- payments.customer                  -> business_partners.customer
+- sales_order_items.productionPlant  -> plants.plant
 
 STATUS CODES (for filtering broken/incomplete flows):
 - overallDeliveryStatus: 'A'=Not delivered, 'B'=Partially, 'C'=Fully delivered
@@ -40,12 +40,23 @@ BUSINESS RULES:
 - COLUMN MAPPING: In the 'billing_documents' table, the column name is 'customer'.
 - NEVER use 'soldToParty' in SQL. If the user asks for 'sold to party', use 'billing_documents.customer'.
 - 'T3.soldToParty' is an invalid column. Always use 'T3.customer' if T3 is billing_documents.
-# --------------------------------------------
+# -------------------------------------------
+
+# --- CRITICAL FIX FOR PRODUCT COLUMN ERROR ---
+- COLUMN MAPPING: 'sales_order_items' table has column 'material', NOT 'product'.
+- To get product name, always JOIN: sales_order_items.material = product_descriptions.product
+- NEVER use 'T2.product' or any_alias.product directly on sales_order_items table.
+- Always use alias.material when referencing product from sales_order_items.
+- Example correct JOIN: JOIN product_descriptions pd ON soi.material = pd.product AND pd.language = 'EN'
+- To count billing documents per product:
+    JOIN sales_order_items soi ON bd.salesOrder = soi.salesOrder
+    JOIN product_descriptions pd ON soi.material = pd.product AND pd.language = 'EN'
+    GROUP BY soi.material, pd.productDescription
+# ---------------------------------------------
 
 - Tracing a billing document: JOIN billing_documents -> journal_entry_items on accountingDocument
 - Payments are linked to billing via payments.accountingDocument = billing_documents.accountingDocument
 - All monetary amounts are stored as TEXT, use CAST(x AS REAL) for arithmetic
-"""
 """
 
 SYSTEM_PROMPT = """You are a SQL expert for an SAP Order-to-Cash (O2C) business data system.
@@ -65,7 +76,7 @@ Rules:
 - Always filter product_descriptions with language='EN' when joining
 - For aggregations, always include GROUP BY
 - NEVER use DROP/DELETE/INSERT/UPDATE/CREATE/ALTER
-- Use only exact column names from the schema. Do not assume names like soldToParty.  # <--- YEH NAYI LINE ADD KAREIN
+- Use only exact column names from the schema. Do not assume names like soldToParty or product on sales_order_items.  # <--- YEH NAYI LINE ADD KI
 - If question is not about the O2C dataset, return: {"sql": null, "out_of_scope": true}
 """
 
@@ -108,7 +119,7 @@ async def _llm(messages: list, fallback_prompt: str) -> str:
 
 
 def _parse_sql_response(raw: str) -> dict:
-    clean = re.sub(r"```(?:json)?|```", "", raw).strip()
+    clean = re.sub(r"```(?:json)?```", "", raw).strip()
     try:
         return json.loads(clean)
     except Exception:
